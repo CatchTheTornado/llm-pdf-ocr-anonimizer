@@ -1,8 +1,9 @@
 # Safely send privacy-critical documents to LLM
 
-This tool uses in-browser **Tesseract OCR** to extract text from images.
+This tool uses in-browser **Tesseract OCR** to extract text from images. 
 
-Then it anonymizes it by removing or **PII (Personally Identitable Information)** so you can safely send it to ChatGPT. 
+Then, it anonymizes it by removing or **PII (Personally Identitable Information)** so you can safely send it to ChatGPT. 
+What is cool you might use it for example to scan PDF documents before using them with non-multimodal LLMS (Ollama ...).
 
 In this example we do use ChatGPT to enhance and fix Tesseract issues as well. 
 This is a PoC project intended to be used for privacy-critical LLM cases, like health data etc.
