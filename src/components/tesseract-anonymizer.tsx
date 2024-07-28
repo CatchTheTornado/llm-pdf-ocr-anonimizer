@@ -8,8 +8,11 @@ import styles from './tesseract-anonymizer.module.css'
 import { convert } from '@/lib/pdf2js'
 import { pdfjs  } from "react-pdf"
 import ZoomableImage from "./zoomable-image"
-import { createWorker } from 'tesseract.js';
+import { createWorker, OEM, PSM } from 'tesseract.js';
 import { SyncRedactor  } from '@/lib/redactor';
+import { createOpenAI, openai } from '@ai-sdk/openai';
+import { CallWarning, convertToCoreMessages, FinishReason, streamText } from 'ai';
+
 const redactor = new SyncRedactor();
 
 export type ImageData = {
@@ -123,11 +126,13 @@ export function TesseractAnonymizer() {
   const  [documentText, setDocumentText] = useState<string>("This tool uses in-browser **Tesseract OCR** to extract text from images. \r\n\r\nThen it anonymizes it by removing or **PII (Personally Identitable Information)** so you can safely send it to ChatGPT. \r\n\r\n\r In this example we do use ChatGPT to enhance and fix Tesseract issues as well. This is a PoC project intended to be used for privacy-critical LLM cases, like health data etc.");
   const [selectedLanguage, setSelectedLanguage] = useState<string>("eng");
   const [images, setImages] = useState<ImageData[]>([]);
+  const [chatGptKey, setChatGptKey] = useState<string>(localStorage.getItem('chatGptApiKey') as string);
 
   const processFile = async (file: File, base64Content: string) => {
 
     (async () => {
-      const worker = await createWorker(selectedLanguage, 1, {
+      setDocumentText('Loading Tesseract worker ...');
+      const worker = await createWorker(selectedLanguage, OEM.TESSERACT_LSTM_COMBINED, {
         logger: m => console.log(m),
         errorHandler: e => console.error(e),
         workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@v5.0.0/dist/worker.min.js',
@@ -144,6 +149,7 @@ export function TesseractAnonymizer() {
         setImages(imagesArray)
 
       } else if(file.type === "application/pdf") {
+        setDocumentText('Converting PDF to images ...');
         const pagesArray = await convert(base64Content,{ base64: true }, pdfjs);
         let page = 1;
         for(const image of pagesArray) {
@@ -156,11 +162,13 @@ export function TesseractAnonymizer() {
         setImages(imagesArray);
       }
       
-        setDocumentText('');
+        let textBuffer = ''
         for(const image of imagesArray) {
-          const ret = await worker.recognize(image.base64Content);
-          setDocumentText(documentText + ret.data.text);
+          setDocumentText('Recognizing page ' + image.displayName + ' ...');
+          const ret = await worker.recognize(image.base64Content, {}, {text: true});
+          textBuffer+= ret.data.text;
         }
+        setDocumentText(textBuffer);
         await worker.terminate();
     })();    
 
@@ -169,6 +177,32 @@ export function TesseractAnonymizer() {
   const anonymizeText = () => {
     const redactor = new SyncRedactor();
     setDocumentText(redactor.redact(documentText));
+  }
+
+  const aiProvider = async () => {
+    const aiProvider = createOpenAI({
+        apiKey: chatGptKey
+    })
+    return aiProvider.chat('gpt-4o')   //gpt-4o-2024-05-13
+}  
+
+  const sendToChatGPT = async () => {
+      setDocumentText('...');
+      const result = await streamText({
+        model: await aiProvider(),
+        messages: [{content: 'This is a text after OCR. First: Please fix it and add proper and nice markdown formatting. Second: add JSON representation of this text at the end. Text: ' + documentText, role: 'user'}],
+        onFinish: (e) => {
+          setDocumentText(e.text);
+        }
+         
+      });
+      
+    let textBuffer = ''
+    for await (const delta of result.textStream) {
+        textBuffer+= delta;
+        setDocumentText(textBuffer);
+    }
+
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -239,9 +273,12 @@ export function TesseractAnonymizer() {
               </Markdown>
         </div>
       </main>
-      <footer className="bg-muted text-muted-foreground py-4 px-6 flex justify-end gap-4">
-        <Button onClick={anonymizeText}>1. Anonymize</Button>
-        <Button>2. Enhance via ChatGPT</Button>
+      <footer className="bg-muted text-muted-foreground py-4 px-6 flex justify-between items-center gap-4">
+        <input value={chatGptKey} onChange={(e) => { setChatGptKey(e.target.value); localStorage.setItem('chatGptApiKey', e.target.value) }} type="text" placeholder="Chat GPT API key" className="px-4 py-2 rounded-md" />
+        <div className="flex justify-between items-center gap-4">
+          <Button onClick={anonymizeText}>1. Anonymize</Button>
+          <Button onClick={sendToChatGPT}>2. Enhance via ChatGPT</Button>
+        </div>
       </footer>
     </div>
   );
